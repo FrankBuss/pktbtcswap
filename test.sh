@@ -36,7 +36,7 @@ rpc sendtoaddress "$ADDR2" 10 > /dev/null
 BAL2=`rpc listreceivedbyaddress 0 true | jq -r ".[] | select( .address == \"$ADDR2\" ) | .amount"`
 echo "balance for address $ADDR2: $BAL2"
 
-./target/debug/pktbtcswap $ADDR2
+# ./target/debug/pktbtcswap $ADDR2
 
 #echo "create Bitcoin address"
 #ADDR=`rpc -named getnewaddress address_type=bech32`
