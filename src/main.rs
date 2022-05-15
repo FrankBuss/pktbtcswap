@@ -1,7 +1,9 @@
 use bitcoin::blockdata::opcodes;
 use bitcoin::blockdata::script::Builder;
+use bitcoin::consensus::encode::serialize;
 use bitcoin::consensus::encode::{deserialize, serialize_hex};
 use bitcoin::hashes::hash160::Hash as Hash160;
+use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::sha256::Hash as SHA256;
 use bitcoin::hashes::Hash;
 use bitcoin::util::address::Payload;
@@ -16,7 +18,6 @@ use serde::de::IntoDeserializer;
 use std::env;
 use std::io::Read;
 use std::str::FromStr;
-use bitcoin::consensus::encode::serialize;
 
 use serde;
 use serde::{Deserialize, Serialize};
@@ -75,10 +76,17 @@ fn main() {
                 .arg(Arg::new("preimage-value").required(true)),
         )
         .subcommand(
+            Command::new("script")
+                .about("Create HTLC script")
+                .arg(Arg::new("bitcoin-to-address").required(true))
+                .arg(Arg::new("preimage-hash").required(true)),
+        )
+        .subcommand(
             Command::new("transaction")
                 .about("Create HTLC script and transaction")
                 .arg(Arg::new("unspent-txid").required(true))
                 .arg(Arg::new("unspent-vout").required(true))
+                .arg(Arg::new("redeem-script").required(true))
                 .arg(Arg::new("bitcoin-to-address").required(true))
                 .arg(Arg::new("amount").required(true))
                 .arg(Arg::new("preimage-hash").required(true)),
@@ -112,17 +120,14 @@ fn main() {
         };
         let lines = serde_json::to_string(&result).unwrap();
         println!("{}", lines);
-    } else if let Some(transaction) = matches.subcommand_matches("transaction") {
+    } else if let Some(transaction) = matches.subcommand_matches("script") {
         //RAW_TX=`brpc createrawtransaction "[{\"txid\":\"$UNSPENT_TXID\",\"vout\":$UNSPENT_VOUT}]" "[{\"$ADDR3\":$AMOUNT}]" 0 true`
         //RAW_TX=`brpc createrawtransaction "[{\"txid\":\"$UNSPENT_TXID\",\"vout\":$UNSPENT_VOUT}]" "[{\"$ADDR3\":$AMOUNT}]" 0 true`
 
         // testing a normal transfer
 
         // get commandline parameters
-        let unspent_txid_string = transaction.value_of("unspent-txid").unwrap();
-        let unspent_vout_string = transaction.value_of("unspent-vout").unwrap();
         let bitcoin_to_address_string = transaction.value_of("bitcoin-to-address").unwrap();
-        let amount_string = transaction.value_of("amount").unwrap();
         let preimage_hash_string = transaction.value_of("preimage-hash").unwrap();
 
         // parse bitcoin address, and get the hashed public key part
@@ -137,8 +142,47 @@ fn main() {
             .push_opcode(opcodes::all::OP_CHECKSIG)
             .into_script();
 
+        #[derive(Serialize, Debug)]
+        struct ScriptResult {
+            script: String,
+            p2sh_address: String,
+        }
+        let network = Address::from_str(bitcoin_to_address_string)
+            .unwrap()
+            .network;
+        let p2sh_address = Address::p2sh(&redeemscript, network);
+        let result: ScriptResult = ScriptResult {
+            script: hex::encode(&redeemscript.as_bytes()),
+            p2sh_address: p2sh_address.to_string(),
+        };
+        let lines = serde_json::to_string(&result).unwrap();
+        println!("{}", lines);
+    } else if let Some(transaction) = matches.subcommand_matches("transaction") {
+        //RAW_TX=`brpc createrawtransaction "[{\"txid\":\"$UNSPENT_TXID\",\"vout\":$UNSPENT_VOUT}]" "[{\"$ADDR3\":$AMOUNT}]" 0 true`
+        //RAW_TX=`brpc createrawtransaction "[{\"txid\":\"$UNSPENT_TXID\",\"vout\":$UNSPENT_VOUT}]" "[{\"$ADDR3\":$AMOUNT}]" 0 true`
+
+        // testing a normal transfer
+
+        // get commandline parameters
+        let unspent_txid_string = transaction.value_of("unspent-txid").unwrap();
+        let unspent_vout_string = transaction.value_of("unspent-vout").unwrap();
+        let redeem_script_string = transaction.value_of("redeem-script").unwrap();
+        let redeem_script = Script::from_hex(redeem_script_string).unwrap();
+        let bitcoin_to_address_string = transaction.value_of("bitcoin-to-address").unwrap();
+        let bitcoin_to_address = Address::from_str(bitcoin_to_address_string).unwrap();
+        let amount_string = transaction.value_of("amount").unwrap();
+        let preimage_hash_string = transaction.value_of("preimage-hash").unwrap();
+
+        // parse bitcoin address, and get the hashed public key part
+        let to_pubkey_hash = get_pubkey_hash(bitcoin_to_address_string);
+
+        // create script
+        let scriptSig: Script = Builder::new()
+            .push_slice(&redeem_script[..])
+            .into_script();
+
         // create transaction
-        let amount:f64 = amount_string.parse().unwrap();
+        let amount: f64 = amount_string.parse().unwrap();
         let tx = Transaction {
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -147,25 +191,27 @@ fn main() {
                 },
                 sequence: 0xfffffffd,
                 witness: Vec::new(),
-                script_sig: Script::new(),
+                script_sig: scriptSig,
             }],
             output: vec![TxOut {
-                script_pubkey: redeemscript.clone(),
+                script_pubkey: bitcoin_to_address.script_pubkey(),
                 value: Amount::from_btc(amount).unwrap().as_sat(),
             }],
             lock_time: 0,
             version: 2,
         };
 
-        let data=  serialize(&tx);
+        let data = serialize(&tx);
 
-
-        println!("tx hex = {}", hex::encode(data));
-        println!("to_pubkey_hash hex = {}", hex::encode(to_pubkey_hash));
-
-        //println!("bitcoin = {:02x?}", bitcoin_from_address);
-
-        //        let preimage_hash =
+        #[derive(Serialize, Debug)]
+        struct TransactionResult {
+            transaction: String,
+        }
+        let result: TransactionResult = TransactionResult {
+            transaction: hex::encode(data),
+        };
+        let lines = serde_json::to_string(&result).unwrap();
+        println!("{}", lines);
 
         return;
 

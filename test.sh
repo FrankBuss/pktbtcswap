@@ -28,7 +28,7 @@ rm -rf $BITCOIN_DATADIR
 mkdir $BITCOIN_DATADIR
 
 echo "starting new bitcoin daemon for regtest"
-bitcoind -fallbackfee=0.0000001 -daemon -server -regtest -datadir=$BITCOIN_DATADIR -rpcbind=127.0.0.1 -rpcuser=bitcoinrpc -rpcpassword=test -rpcallowip=127.0.0.1 -rpcport=8333
+bitcoind -txindex -fallbackfee=0.0000001 -daemon -server -regtest -datadir=$BITCOIN_DATADIR -rpcbind=127.0.0.1 -rpcuser=bitcoinrpc -rpcpassword=test -rpcallowip=127.0.0.1 -rpcport=8333
 sleep 5
 
 echo "creating wallet"
@@ -52,6 +52,37 @@ bitcoin_mine 1
 # show balance
 BAL2=`bitcoin_received $ADDR2`
 echo "balance for address $ADDR2: $BAL2"
+
+
+P2SH=`./target/debug/pktbtcswap script $ADDR3 00`
+P2SH_ADDR=`echo -n $P2SH | jq -r ".p2sh_address"`
+SCRIPT=`echo -n $P2SH | jq -r ".script"`
+
+UNSPENT_AMOUNT=10
+TX_ID=`brpc sendtoaddress $P2SH_ADDR $UNSPENT_AMOUNT`
+
+# confirm transaction
+bitcoin_mine 1
+
+P2SH_TX_HEX=`brpc getrawtransaction $TX_ID`
+P2SH_TX=`brpc decoderawtransaction $P2SH_TX_HEX`
+P2SH_OUT=`echo -n $P2SH_TX | jq -r ".vout | .[] | select( .scriptPubKey.addresses[0] == \"$P2SH_ADDR\" )"`
+SCRIPT_PUB_KEY=`echo -n $P2SH_OUT | jq -r ".scriptPubKey.hex"`
+VOUT_INDEX=`echo -n $P2SH_OUT | jq -r ".n"`
+
+ADDR3=`brpc getnewaddress addr3 legacy`
+
+AMOUNT="9.99999"
+
+
+TX=`./target/debug/pktbtcswap transaction $TX_ID $VOUT_INDEX $SCRIPT $ADDR3 $AMOUNT 00 | jq -r ".transaction"`
+
+SIGNED_TX=`brpc signrawtransactionwithwallet $TX "[{\"txid\":\"$TX_ID\",\"vout\":$VOUT_INDEX,\"scriptPubKey\":\"$SCRIPT_PUB_KEY\",\"amount\":$UNSPENT_AMOUNT}]" | jq -r ".hex"`
+brpc sendrawtransaction $SIGNED_TX
+
+return
+
+
 
 ADDR3=`brpc getnewaddress addr3 legacy`
 
